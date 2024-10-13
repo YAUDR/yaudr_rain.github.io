@@ -1,0 +1,384 @@
+<!DOCTYPE html><html><head><base href="https://websim.ai/cube-visualizer/">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>yaudr bossfight</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  body { margin: 0; overflow: hidden; }
+  canvas { display: block; }
+  #audioControl {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+  }
+  #hpBarContainer {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: 200px;
+    height: 20px;
+    background-color: #333;
+    border: 1px solid #fff;
+  }
+  #hpBar {
+    width: 100%;
+    height: 100%;
+    background-color: #f00;
+  }
+  #hpText {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    color: #fff;
+    font-family: 'Tw Cen MT Condensed', sans-serif;
+  }
+  #bossName {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Tw Cen MT Condensed', sans-serif;
+    font-size: 48px;
+    color: #fff;
+    pointer-events: none;
+  }
+  #cooldownIndicator {
+    margin-top: 10px;
+    color: #fff;
+    font-family: 'Tw Cen MT Condensed', sans-serif;
+  }
+</style>
+</head>
+<body>
+<div id="audioControl">
+  <button id="playPause">Play/Pause</button>
+  <input type="range" id="volumeControl" min="0" max="1" step="0.1" value="0.5">
+  <button id="toggleUI">Hide UI</button>
+  <div id="cooldownIndicator">Cooldown: Ready</div>
+  <div id="dashCooldown">Dash: Ready</div>
+</div>
+<div id="hpBarContainer">
+  <div id="hpBar"></div>
+  <div id="hpText">YAUDR: 1000 HP</div>
+</div>
+<div id="bossName">YAUDR</div>
+<script>
+  let scene, camera, renderer, cube, edges;
+  let audioContext, analyser, dataArray;
+  let isPlaying = false;
+  let audio = new Audio('song.mp3');
+  let additionalShapes = [];
+  let fallingWireframes = [];
+  let gainNode;
+  let lastDropTime = 0;
+  let delayReductionTime = 0;
+  let smallTexts = [];
+  let bossHP = 1000;
+  let playerHP = 400;
+  let thrownObjects = [];
+  let raycaster, mouse;
+  let lastShootTime = 0;
+  let shootCooldown = 1000; // 1 second cooldown
+  let lastBossAttackTime = 0;
+  let bossAttackCooldown = 3000; // 3 seconds cooldown
+  let lastDashTime = 0;
+  let dashCooldown = 3000; // 3 seconds cooldown
+  let isSpamming = false;
+  let spamEndTime = 0;
+
+  function init() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const geometry = new THREE.BoxGeometry();
+    const material = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+    cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+
+    camera.position.z = 5;
+
+    raycaster = new THREE.Raycaster();
+    mouse = new THREE.Vector2();
+
+    window.addEventListener('resize', onWindowResize, false);
+    window.addEventListener('mousemove', onMouseMove, false);
+    window.addEventListener('click', onMouseClick, false);
+    window.addEventListener('keydown', onKeyDown, false);
+
+    setupAudio();
+    audio.play();
+    isPlaying = true;
+  }
+
+  function onKeyDown(event) {
+    if (event.key === 'e' || event.key === 'E') {
+      if (!isSpamming) {
+        isSpamming = true;
+        spamEndTime = Date.now() + 2500;
+      } else {
+        dash();
+      }
+    }
+  }
+
+  function throwObjectInDirection(direction) {
+    const geometries = [
+      new THREE.SphereGeometry(0.2, 32, 32),
+      new THREE.BoxGeometry(0.3, 0.3, 0.3),
+      new THREE.ConeGeometry(0.2, 0.4, 32),
+      new THREE.TorusGeometry(0.2, 0.1, 16, 100)
+    ];
+    const geometry = geometries[Math.floor(Math.random() * geometries.length)];
+    const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const object = new THREE.Mesh(geometry, material);
+    
+    object.position.set(camera.position.x, camera.position.y, camera.position.z);
+    object.velocity = direction.normalize().multiplyScalar(0.2);
+    object.isPlayerBullet = true;
+    
+    scene.add(object);
+    thrownObjects.push(object);
+  }
+
+  function updateThrownObjects() {
+    thrownObjects.forEach((object, index) => {
+      object.position.add(object.velocity);
+      
+      if (object.position.distanceTo(cube.position) < 0.5) {
+        if (object.isPlayerBullet) {
+          bossHP -= 10;
+          updateHPBar();
+          scene.remove(object);
+          thrownObjects.splice(index, 1);
+        } else {
+          // Deflect boss bullet
+          object.velocity.reflect(new THREE.Vector3().subVectors(object.position, cube.position).normalize());
+          object.isPlayerBullet = true;
+        }
+      }
+      
+      additionalShapes.forEach((shape, shapeIndex) => {
+        if (object.position.distanceTo(shape.mesh.position) < 0.5) {
+          if (object.isPlayerBullet) {
+            bossHP -= 5;
+            updateHPBar();
+            scene.remove(shape.mesh);
+            additionalShapes.splice(shapeIndex, 1);
+            scene.remove(object);
+            thrownObjects.splice(index, 1);
+          } else {
+            // Deflect boss bullet
+            object.velocity.reflect(new THREE.Vector3().subVectors(object.position, shape.mesh.position).normalize());
+            object.isPlayerBullet = true;
+          }
+        }
+      });
+      
+      if (object.position.distanceTo(camera.position) > 50) {
+        scene.remove(object);
+        thrownObjects.splice(index, 1);
+      }
+    });
+  }
+
+  function updateHPBar() {
+    const hpBar = document.getElementById('hpBar');
+    const hpText = document.getElementById('hpText');
+    if (hpBar && hpText) {
+      hpBar.style.width = `${(bossHP / 1000) * 100}%`;
+      hpText.textContent = `YAUDR: ${bossHP} HP`;
+      if (bossHP <= 0) {
+        explodeWireframes();
+        alert('You defeated the boss!');
+        bossHP = 1000;
+      }
+    }
+  }
+
+  function explodeWireframes() {
+    const lines = [];
+    fallingWireframes.forEach(wireframe => {
+      for (let i = 0; i < 10; i++) {
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2
+          )
+        ]);
+        const material = new THREE.LineBasicMaterial({ color: 0xffffff });
+        const line = new THREE.Line(geometry, material);
+        line.position.copy(wireframe.position);
+        line.velocity = new THREE.Vector3(
+          (Math.random() - 0.5) * 0.1,
+          (Math.random() - 0.5) * 0.1,
+          (Math.random() - 0.5) * 0.1
+        );
+        scene.add(line);
+        lines.push(line);
+      }
+      scene.remove(wireframe);
+    });
+    fallingWireframes = lines;
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    if (analyser) {
+      analyser.getByteFrequencyData(dataArray);
+      let averageVolume = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      
+      let displacement = (averageVolume / 255) * 0.1;
+      
+      cube.position.set(
+        (Math.random() - 0.5) * displacement,
+        (Math.random() - 0.5) * displacement,
+        (Math.random() - 0.5) * displacement
+      );
+      
+      let scale = 1 + displacement * 0.2;
+      cube.scale.set(scale, scale, scale);
+      
+      cube.rotation.x += 0.005 + displacement * 0.02;
+      cube.rotation.y += 0.005 + displacement * 0.02;
+
+      if (averageVolume > 200) {
+        createAdditionalShape(averageVolume);
+      }
+
+      const currentTime = Date.now();
+      let delay = 600;
+
+      if (averageVolume > 200) {
+        delay = 0;
+        delayReductionTime = currentTime + 2000;
+      } else if (averageVolume > 150 || currentTime < delayReductionTime) {
+        delay = 300;
+      }
+
+      if (currentTime - lastDropTime > delay) {
+        if (averageVolume > 120) {
+          createFallingWireframe();
+          createFallingWireframe();
+          createFallingWireframe();
+        } else if (averageVolume > 30) {
+          createFallingWireframe();
+        }
+        lastDropTime = currentTime;
+      }
+
+      additionalShapes.forEach((shape, index) => {
+        shape.mesh.rotation.x += 0.02;
+        shape.mesh.rotation.y += 0.02;
+        shape.mesh.scale.multiplyScalar(0.99);
+        shape.life--;
+
+        if (shape.life <= 0) {
+          scene.remove(shape.mesh);
+          additionalShapes.splice(index, 1);
+        }
+      });
+
+      fallingWireframes.forEach((wireframe, index) => {
+        wireframe.position.add(wireframe.velocity);
+        if (wireframe instanceof THREE.Line) {
+          wireframe.rotation.x += 0.02;
+          wireframe.rotation.y += 0.02;
+        } else {
+          wireframe.rotation.x += 0.02;
+          wireframe.rotation.y += 0.02;
+        }
+
+        if (wireframe.position.distanceTo(camera.position) < 0.5) {
+          playerHP -= 10;
+          updatePlayerHPBar();
+          scene.remove(wireframe);
+          fallingWireframes.splice(index, 1);
+        }
+
+        if (wireframe.position.y < -10) {
+          scene.remove(wireframe);
+          fallingWireframes.splice(index, 1);
+        }
+      });
+
+      updateSmallTexts();
+      bossAttack();
+    } else {
+      cube.rotation.x += 0.005;
+      cube.rotation.y += 0.005;
+    }
+
+    updateThrownObjects();
+    updateCooldownIndicator();
+    updateDashCooldown();
+
+    if (isSpamming && Date.now() < spamEndTime) {
+      if (Date.now() - lastShootTime > 100) {  // Shoot every 100ms during spam
+        raycaster.setFromCamera(mouse, camera);
+        throwObjectInDirection(raycaster.ray.direction);
+        lastShootTime = Date.now();
+      }
+    } else if (Date.now() >= spamEndTime) {
+      isSpamming = false;
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  function setupAudio() {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    const bufferLength = analyser.frequencyBinCount;
+    dataArray = new Uint8Array(bufferLength);
+
+    const source = audioContext.createMediaElementSource(audio);
+    gainNode = audioContext.createGain();
+    source.connect(gainNode);
+    gainNode.connect(analyser);
+    analyser.connect(audioContext.destination);
+
+    gainNode.gain.setValueAtTime(2, audioContext.currentTime);
+  }
+
+  document.getElementById('playPause').addEventListener('click', function() {
+    if (isPlaying) {
+      audio.pause();
+      isPlaying = false;
+    } else {
+      audio.play();
+      isPlaying = true;
+    }
+  });
+
+  document.getElementById('volumeControl').addEventListener('input', function(e) {
+    if (gainNode) {
+      gainNode.gain.setValueAtTime(e.target.value * 2, audioContext.currentTime);
+    }
+  });
+
+  document.getElementById('toggleUI').addEventListener('click', function() {
+    const audioControl = document.getElementById('audioControl');
+    if (audioControl.style.display === 'none') {
+      audioControl.style.display = 'block';
+      this.textContent = 'Hide UI';
+    } else {
+      audioControl.style.display = 'none';
+      this.textContent = 'Show UI';
+    }
+  });
+
+  init();
+  animate();
+</script>
+</body></html>
