@@ -1,9 +1,7 @@
-<html>
-<head>
-<base href="https://websim.ai/cube-visualizer/">
+<!DOCTYPE html><html><head><base href="https://websim.ai/cube-visualizer/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>yaudr bossfight</title>
+<title>yaudr_rain_vizualiser</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
   body { margin: 0; overflow: hidden; }
@@ -15,101 +13,26 @@
     transform: translateX(-50%);
     z-index: 100;
   }
-  #hpBarContainer {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    width: 200px;
-    height: 20px;
-    background-color: #333;
-    border: 1px solid #fff;
-  }
-  #hpBar {
-    width: 100%;
-    height: 100%;
-    background-color: #f00;
-  }
-  #hpText {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    text-align: center;
-    color: #fff;
-    font-family: 'Tw Cen MT Condensed', sans-serif;
-  }
-  #bossName {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-family: 'Tw Cen MT Condensed', sans-serif;
-    font-size: 48px;
-    color: #fff;
-    pointer-events: none;
-  }
-  #cooldownIndicator {
-    margin-top: 10px;
-    color: #fff;
-    font-family: 'Tw Cen MT Condensed', sans-serif;
-  }
 </style>
 </head>
 <body>
 <div id="audioControl">
-  <button id="playPause">Play/Pause</button>
+  <input type="file" id="audioInput" accept="audio/*">
+  <button id="playPause">lay/pause</button>
   <input type="range" id="volumeControl" min="0" max="1" step="0.1" value="0.5">
-  <button id="toggleUI">Hide UI</button>
-  <div id="cooldownIndicator">Cooldown: Ready</div>
-  <div id="dashCooldown">Dash: Ready</div>
+  <button id="toggleUI">hide ui</button>
 </div>
-<div id="hpBarContainer">
-  <div id="hpBar"></div>
-  <div id="hpText">YAUDR: 1000 HP</div>
-</div>
-<div id="bossName">YAUDR</div>
 <script>
   let scene, camera, renderer, cube, edges;
   let audioContext, analyser, dataArray;
   let isPlaying = false;
-  let audio = new Audio('song.mp3');
+  let audio = new Audio();
   let additionalShapes = [];
   let fallingWireframes = [];
   let gainNode;
   let lastDropTime = 0;
   let delayReductionTime = 0;
   let smallTexts = [];
-  let bossHP = 1000;
-  let playerHP = 400;
-  let thrownObjects = [];
-  let raycaster, mouse;
-  let lastShootTime = 0;
-  let shootCooldown = 1000; // 1 second cooldown
-  let lastBossAttackTime = 0;
-  let bossAttackCooldown = 3000; // 3 seconds cooldown
-  let lastDashTime = 0;
-  let dashCooldown = 3000; // 3 seconds cooldown
-  let isSpamming = false;
-  let spamEndTime = 0;
-
-  function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }
-
-  function onMouseMove(event) {
-    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-  }
-
-  function onMouseClick(event) {
-    if (analyser && Date.now() - lastShootTime > shootCooldown) {
-      raycaster.setFromCamera(mouse, camera);
-      throwObjectInDirection(raycaster.ray.direction);
-      lastShootTime = Date.now();
-    }
-  }
 
   function init() {
     scene = new THREE.Scene();
@@ -123,241 +46,238 @@
     cube = new THREE.Mesh(geometry, material);
     scene.add(cube);
 
+    // Create edges
+    const edgesGeometry = new THREE.EdgesGeometry(geometry);
+    const edgesMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+    edges = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+    scene.add(edges);
+
     camera.position.z = 5;
 
-    raycaster = new THREE.Raycaster();
-    mouse = new THREE.Vector2();
-
     window.addEventListener('resize', onWindowResize, false);
-    window.addEventListener('mousemove', onMouseMove, false);
-    window.addEventListener('click', onMouseClick, false);
-    window.addEventListener('keydown', onKeyDown, false);
-
-    setupAudio();
-    audio.play();
-    isPlaying = true;
   }
 
-  function onKeyDown(event) {
-    if (event.key === 'e' || event.key === 'E') {
-      if (!isSpamming) {
-        isSpamming = true;
-        spamEndTime = Date.now() + 2500;
-      } else {
-        dash();
-      }
-    }
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
-  function throwObjectInDirection(direction) {
+  function createAdditionalShape(volume) {
+    const shapeTypes = [THREE.SphereGeometry, THREE.ConeGeometry, THREE.TorusGeometry];
+    const geometry = new shapeTypes[Math.floor(Math.random() * shapeTypes.length)](0.2, 16, 16);
+    const material = new THREE.MeshBasicMaterial({ color: Math.random() * 0xffffff, wireframe: true });
+    const shape = new THREE.Mesh(geometry, material);
+    
+    shape.position.set(
+      (Math.random() - 0.5) * 5,
+      (Math.random() - 0.5) * 5,
+      (Math.random() - 0.5) * 5
+    );
+    
+    scene.add(shape);
+    additionalShapes.push({ mesh: shape, life: 100 });
+  }
+
+  function createFallingWireframe() {
     const geometries = [
-      new THREE.SphereGeometry(0.2, 32, 32),
-      new THREE.BoxGeometry(0.3, 0.3, 0.3),
-      new THREE.ConeGeometry(0.2, 0.4, 32),
-      new THREE.TorusGeometry(0.2, 0.1, 16, 100)
+      new THREE.BoxGeometry(0.5, 0.5, 0.5),
+      new THREE.SphereGeometry(0.25, 8, 8),
+      new THREE.TetrahedronGeometry(0.3),
+      new THREE.OctahedronGeometry(0.3)
     ];
     const geometry = geometries[Math.floor(Math.random() * geometries.length)];
-    const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const object = new THREE.Mesh(geometry, material);
+    const material = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+    const wireframe = new THREE.Mesh(geometry, material);
     
-    object.position.set(camera.position.x, camera.position.y, camera.position.z);
-    object.velocity = direction.normalize().multiplyScalar(0.2);
-    object.isPlayerBullet = true;
+    wireframe.position.set(
+      (Math.random() - 0.5) * 10,
+      10,
+      (Math.random() - 0.5) * 10
+    );
     
-    scene.add(object);
-    thrownObjects.push(object);
+    scene.add(wireframe);
+    fallingWireframes.push(wireframe);
+
+    // Create small text following the wireframe
+    createSmallText(wireframe.position);
   }
 
-  function updateThrownObjects() {
-    thrownObjects.forEach((object, index) => {
-      object.position.add(object.velocity);
-      
-      if (object.position.distanceTo(cube.position) < 0.5) {
-        if (object.isPlayerBullet) {
-          bossHP -= 10;
-          updateHPBar();
-          scene.remove(object);
-          thrownObjects.splice(index, 1);
-        } else {
-          object.velocity.reflect(new THREE.Vector3().subVectors(object.position, cube.position).normalize());
-          object.isPlayerBullet = true;
-        }
-      }
-      
-      additionalShapes.forEach((shape, shapeIndex) => {
-        if (object.position.distanceTo(shape.mesh.position) < 0.5) {
-          if (object.isPlayerBullet) {
-            bossHP -= 5;
-            updateHPBar();
-            scene.remove(shape.mesh);
-            additionalShapes.splice(shapeIndex, 1);
-            scene.remove(object);
-            thrownObjects.splice(index, 1);
-          } else {
-            object.velocity.reflect(new THREE.Vector3().subVectors(object.position, shape.mesh.position).normalize());
-            object.isPlayerBullet = true;
-          }
-        }
-      });
-      
-      if (object.position.distanceTo(camera.position) > 50) {
-        scene.remove(object);
-        thrownObjects.splice(index, 1);
-      }
-    });
-  }
+  function createSmallText(position) {
+    const textDiv = document.createElement('div');
+    textDiv.textContent = 'YAUDR';
+    textDiv.style.position = 'absolute';
+    textDiv.style.fontFamily = "'Tw Cen MT Condensed', sans-serif";
+    textDiv.style.fontSize = '24px'; // Increased font size
+    textDiv.style.color = 'white';
+    textDiv.style.pointerEvents = 'none';
+    document.body.appendChild(textDiv);
 
-  function updateHPBar() {
-    const hpBar = document.getElementById('hpBar');
-    const hpText = document.getElementById('hpText');
-    if (hpBar && hpText) {
-      hpBar.style.width = `${(bossHP / 1000) * 100}%`;
-      hpText.textContent = `YAUDR: ${bossHP} HP`;
-      if (bossHP <= 0) {
-        explodeWireframes();
-        alert('You defeated the boss!');
-        bossHP = 1000;
-      }
-    }
-  }
-
-  function explodeWireframes() {
-    const lines = [];
-    fallingWireframes.forEach(wireframe => {
-      for (let i = 0; i < 10; i++) {
-        const geometry = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(0, 0, 0),
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 2,
-            (Math.random() - 0.5) * 2,
-            (Math.random() - 0.5) * 2
-          )
-        ]);
-        const material = new THREE.LineBasicMaterial({ color: 0xffffff });
-        const line = new THREE.Line(geometry, material);
-        line.position.copy(wireframe.position);
-        line.velocity = new THREE.Vector3(
-          (Math.random() - 0.5) * 0.1,
-          (Math.random() - 0.5) * 0.1,
-          (Math.random() - 0.5) * 0.1
-        );
-        scene.add(line);
-        lines.push(line);
-      }
-      scene.remove(wireframe);
-    });
-    fallingWireframes = lines;
+    smallTexts.push({ element: textDiv, position: position });
   }
 
   function updateSmallTexts() {
     smallTexts.forEach((text, index) => {
-      text.position.y += 0.01; // Move up slowly
-      text.material.opacity -= 0.01; // Fade out
-      if (text.material.opacity <= 0) {
-        scene.remove(text);
+      const screenPosition = text.position.clone().project(camera);
+      text.element.style.left = (screenPosition.x * 0.5 + 0.5) * window.innerWidth + 'px';
+      text.element.style.top = (-(screenPosition.y * 0.5) + 0.5) * window.innerHeight + 'px';
+
+      if (text.position.y < -10) {
+        document.body.removeChild(text.element);
         smallTexts.splice(index, 1);
       }
     });
   }
 
-  function dash() {
-    if (Date.now() - lastDashTime < dashCooldown) return;
-    lastDashTime = Date.now();
-    camera.position.x += (Math.random() - 0.5) * 2; // Random dash
-    camera.position.y += (Math.random() - 0.5) * 2;
-    document.getElementById('dashCooldown').textContent = 'Dash: Used';
-    
-    setTimeout(() => {
-      document.getElementById('dashCooldown').textContent = 'Dash: Ready';
-    }, dashCooldown);
-  }
-
-  function setupAudio() {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioContext.createAnalyser();
-    gainNode = audioContext.createGain();
-    
-    audio.src = 'song.mp3';
-    const source = audioContext.createMediaElementSource(audio);
-    source.connect(gainNode);
-    gainNode.connect(analyser);
-    analyser.connect(audioContext.destination);
-    
-    analyser.fftSize = 2048;
-    dataArray = new Uint8Array(analyser.frequencyBinCount);
-    
-    audio.addEventListener('play', function() {
-      audioContext.resume().then(() => {
-        console.log('Playback resumed successfully');
-      });
-    });
-    
-    document.getElementById('playPause').addEventListener('click', () => {
-      if (isPlaying) {
-        audio.pause();
-        document.getElementById('playPause').innerText = 'Play';
-      } else {
-        audio.play();
-        document.getElementById('playPause').innerText = 'Pause';
-      }
-      isPlaying = !isPlaying;
-    });
-    
-    document.getElementById('volumeControl').addEventListener('input', (event) => {
-      gainNode.gain.value = event.target.value;
-    });
-  }
-
   function animate() {
     requestAnimationFrame(animate);
-    if (audio && isPlaying) {
+
+    if (analyser) {
       analyser.getByteFrequencyData(dataArray);
-    }
-    
-    updateThrownObjects();
-    updateSmallTexts();
-    updateFallingWireframes();
+      let averageVolume = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      
+      // Normalize the volume (0-255) to a smaller displacement factor (0-0.1)
+      let displacement = (averageVolume / 255) * 0.1;
+      
+      // Apply reduced displacement to the cube and edges
+      cube.position.set(
+        (Math.random() - 0.5) * displacement,
+        (Math.random() - 0.5) * displacement,
+        (Math.random() - 0.5) * displacement
+      );
+      edges.position.copy(cube.position);
+      
+      // Scale the cube based on the volume, but with less intensity
+      let scale = 1 + displacement * 0.2;
+      cube.scale.set(scale, scale, scale);
+      edges.scale.copy(cube.scale);
+      
+      // Rotate the cube based on the volume, but slower
+      cube.rotation.x += 0.005 + displacement * 0.02;
+      cube.rotation.y += 0.005 + displacement * 0.02;
+      edges.rotation.copy(cube.rotation);
 
-    if (Date.now() - lastBossAttackTime > bossAttackCooldown) {
-      launchBossAttack();
-      lastBossAttackTime = Date.now();
-    }
+      // Create new shapes when the volume is high
+      if (averageVolume > 200) {
+        createAdditionalShape(averageVolume);
+      }
 
-    if (isSpamming && Date.now() > spamEndTime) {
-      isSpamming = false;
-      document.getElementById('cooldownIndicator').innerText = 'Cooldown: Ready';
+      // Create falling wireframes based on volume with a dynamic delay
+      const currentTime = Date.now();
+      let delay = 600; // Default delay
+
+      if (averageVolume > 200) {
+        delay = 0; // No delay when it's really loud
+        delayReductionTime = currentTime + 2000; // Reduce delay for 2 seconds
+      } else if (averageVolume > 150 || currentTime < delayReductionTime) {
+        delay = 300; // Lower delay when it's loud or within the reduction period
+      }
+
+      if (currentTime - lastDropTime > delay) {
+        if (averageVolume > 120) {
+          createFallingWireframe();
+          createFallingWireframe();
+          createFallingWireframe();
+        } else if (averageVolume > 30) {
+          createFallingWireframe();
+        }
+        lastDropTime = currentTime;
+      }
+
+      // Animate and remove additional shapes
+      additionalShapes.forEach((shape, index) => {
+        shape.mesh.rotation.x += 0.02;
+        shape.mesh.rotation.y += 0.02;
+        shape.mesh.scale.multiplyScalar(0.99);
+        shape.life--;
+
+        if (shape.life <= 0) {
+          scene.remove(shape.mesh);
+          additionalShapes.splice(index, 1);
+        }
+      });
+
+      // Animate falling wireframes
+      fallingWireframes.forEach((wireframe, index) => {
+        wireframe.position.y -= 0.05;
+        wireframe.rotation.x += 0.02;
+        wireframe.rotation.y += 0.02;
+
+        if (wireframe.position.y < -10) {
+          scene.remove(wireframe);
+          fallingWireframes.splice(index, 1);
+        }
+      });
+
+      // Update small texts
+      updateSmallTexts();
     } else {
-      document.getElementById('cooldownIndicator').innerText = 'Cooldown: Active';
+      // Default rotation when no audio is playing
+      cube.rotation.x += 0.005;
+      cube.rotation.y += 0.005;
+      edges.rotation.copy(cube.rotation);
     }
 
     renderer.render(scene, camera);
   }
 
-  function launchBossAttack() {
-    // Boss attacks the player
-    if (playerHP > 0) {
-      playerHP -= 20; // Decrease player HP by 20
-      alert(`Boss attacked! Player HP: ${playerHP}`);
-      if (playerHP <= 0) {
-        alert('You have been defeated by YAUDR!');
-        // Reset or end game logic here
-      }
-    }
+  function setupAudio() {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    const bufferLength = analyser.frequencyBinCount;
+    dataArray = new Uint8Array(bufferLength);
+
+    const source = audioContext.createMediaElementSource(audio);
+    gainNode = audioContext.createGain();
+    source.connect(gainNode);
+    gainNode.connect(analyser);
+    analyser.connect(audioContext.destination);
+
+    // Set initial gain to 2x (200%)
+    gainNode.gain.setValueAtTime(2, audioContext.currentTime);
   }
 
-  function updateFallingWireframes() {
-    // Logic to update falling wireframes goes here
-    fallingWireframes.forEach(wireframe => {
-      wireframe.position.y -= 0.01; // Fall down slowly
-      if (wireframe.position.y < -5) {
-        scene.remove(wireframe);
+  document.getElementById('audioInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+      const fileURL = URL.createObjectURL(file);
+      audio.src = fileURL;
+      if (!analyser) setupAudio();
+    }
+  });
+
+  document.getElementById('playPause').addEventListener('click', function() {
+    if (audio.src) {
+      if (isPlaying) {
+        audio.pause();
+        isPlaying = false;
+      } else {
+        audio.play();
+        isPlaying = true;
       }
-    });
-  }
+    }
+  });
+
+  document.getElementById('volumeControl').addEventListener('input', function(e) {
+    if (gainNode) {
+      gainNode.gain.setValueAtTime(e.target.value * 2, audioContext.currentTime);
+    }
+  });
+
+  document.getElementById('toggleUI').addEventListener('click', function() {
+    const audioControl = document.getElementById('audioControl');
+    if (audioControl.style.display === 'none') {
+      audioControl.style.display = 'block';
+      this.textContent = 'Hide UI';
+    } else {
+      audioControl.style.display = 'none';
+      this.textContent = 'Show UI';
+    }
+  });
 
   init();
   animate();
 </script>
-</body>
-</html>
+</body></html>
 
